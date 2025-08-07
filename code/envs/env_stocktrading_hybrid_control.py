@@ -38,6 +38,8 @@ class StockTradingEnv(gym.Env):
         temporal_feature_list,
         additional_list,
         time_window_start, # should be a list
+        risk_lambda: float = 0.2,
+        mean_risk_window: int = 252,
         short_prediction_model_path = None,
         long_prediction_model_path = None,
         step_len=1000,
@@ -111,6 +113,9 @@ class StockTradingEnv(gym.Env):
         self.print_additional_flag = print_additional_flag
         self.short_hidden_feature = []
         self.long_hidden_feature = []
+        # risk portfolio parameters
+        self.risk_lambda = risk_lambda
+        self.mean_risk_window = mean_risk_window
 
         # initalize state and info
         self.info = self._initiate_info()
@@ -331,6 +336,16 @@ class StockTradingEnv(gym.Env):
             self.asset_memory.append(self.end_total_asset)
             self.date_memory.append(self._get_date())
             self.reward = ((self.end_total_asset - begin_total_asset)/(begin_total_asset*1.0))
+            # override reward with mean-variance portfolio calculation
+            return_df = self.data['return_list'].values[0]  # pandas DataFrame of past returns
+            exp_ret = return_df.mean(axis=0).values         # expected returns vector
+            cov_mat = np.array(self.data['cov_list'].values[0])  # covariance matrix
+            prices = np.array(self.info[1:1+self.stock_dim])
+            holdings = np.array(self.info[-self.stock_dim:])
+            port_vals = prices * holdings
+            weights = port_vals / port_vals.sum()
+            mv_reward = weights.dot(exp_ret) - self.risk_lambda * weights.dot(cov_mat).dot(weights)
+            self.reward = float(mv_reward)
             self.rewards_memory.append(self.reward)
             self.amount_memory.append(self.info[-self.stock_dim:])
             # self.reward = self.reward * self.reward_scaling
@@ -495,6 +510,10 @@ class StockTradingEnv(gym.Env):
     def _seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
+
+    def seed(self, seed=None):
+        """Gym/Gymnasium compatible seed method"""
+        return self._seed(seed)
 
     def get_sb_env(self):
         e = DummyVecEnv([lambda: self])
